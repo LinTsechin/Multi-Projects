@@ -1,0 +1,220 @@
+---
+title: "实验七：因子分析"
+author:
+  - 林泽钦 3160104013 统计1601
+documentclass: ctexart
+output:
+  rticles::ctex:
+    fig_caption: yes
+    number_sections: yes
+    toc: yes
+classoption: "hyperref,"
+---
+
+# 实验目的和要求
+
+##  实验目的
+
+通过本试验项目，能够理解并掌握如下内容：
+
++ 熟悉潜在因子模型载荷矩阵的不同估计方法；
++ 熟悉潜在因子个数的确定方法，因子得分的计算；
++ 能够利用因子模型 (或正交旋转) 对所考虑问题做出合理的解释；
+
+## 实验内容 
+
+### 城镇居民消费数据分析
+
+我国 2010 年各地区城镇居民家庭平均每人全年消费数据如 ex6.7 所示，这些数据指标分别从食品 ($x_1$)，衣着 ($x_2$)，居住 ($x_3$)，医疗 ($x_4$)，交通通信 ($x_5$)，教育 ($x_6$)，家政 ($x_7$)，和耐用消费品 ($x_8$) 来描述消费。试对该数据进行因子分析。
+
+### 体检数据分析
+
+采用体检数据进行分析。这是一组 4000 多个样本的体检资料，分别有常规体检的一系列指标，请考虑下面的问题：
+
++ 利用主成分方法变量进行降维，然后进行相应的主成分方法聚类分析；
++ 构建因子分析模型，进行因子旋转，分析每个因子的意义及这些潜在的因子与年龄的关系。
+
+## 实验环境
+
++ R-3.5.2
++ RStudio
+
+## 实验所用程序包
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(VIM)
+library(Hmisc)
+library(psycho)
+library(GPArotation)
+library(factoextra)
+```
+
+# 实验过程与结果
+
+## 城镇居民消费数据分析
+
+### 数据导入与预处理
+
+实验中选择以 csv 格式导入文件。
+
+```{r}
+mydata1 <- read_csv("Pro7Data1.csv")
+```
+
+数据的第一列为城市名称，在后续分析中没有太多用处，此处将其转换为行名。
+
+```{r warning=FALSE}
+mydata1 <- column_to_rownames(mydata1, var = "City")
+head(mydata1)
+```
+
+接下来检查数据的完整性。这里使用的是 mice 包的 md.pattern() 函数。经检验，数据完整。
+
+```{r message=FALSE, warning=FALSE}
+aggr(mydata1, prop = FALSE, numbers = TRUE)
+```
+
+### 因子数目确定
+
+为了计算出适合的因子模型，我们需要先确定最佳的因子数目。选择最佳因子数目的方法有很多，例如 Parallel Analysis 等。不过目前哪一种方法更适合并没有定论。实验中选择使用 psycho 包中的 n_factor() 函数来解决这个问题。这个函数使用多种方法计算出相应的最佳因子数目，然后投票决定出最终的因子数目。这个函数的使用参考了博客：
+
+https://www.r-bloggers.com/how-many-factors-to-retain-in-factor-analysis/
+
+计算的代码如下，这里指定因子分析方法为极大似然估计，旋转方法为方差最大旋转。
+
+```{r warning=FALSE}
+res1 <- n_factors(mydata1, fm = "mle", rotate = "varimax")
+print(res1)
+```
+
+可以看到，有 4 种方法支持因子数目为 1，另有 4 种方法支持因子数目为 2，因此 n_factor() 函数建议使用这两个的其中一个。可以对返回值使用 summary() 函数，来查看各个因子的特征值以及累计贡献率。
+
+```{r}
+summary(res1)
+```
+
+绘制成较为直观的图像如下。橙色阴影表示有几种方法认为该因子数量最佳，红色折线为特征值，蓝色折线为累计贡献率。
+
+```{r}
+plot(res1)
+```
+
+另外具体的各种方法选出的最佳因子数如下：
+
+```{r}
+res1$values$methods
+```
+
+### 因子模型
+
+实验最终选择因子数目为 2，得到的模型为：
+
+```{r}
+fa1 <- factanal(mydata1, factor = 2, 
+                fm = "mle", rotation = "varimax", scores = "Bartlett")
+fa1
+```
+
+可以看到，因子 1 中载荷较高的有食品 ($x_1$)，交通通信 ($x_5$)，家政 ($x_7$)，中等的有居住 ($x_3$)，教育 ($x_6$)，而因子 2 中较重要的有衣着 ($x_2$)，医疗 ($x_4$) 以及耐用消费品 ($x_8$)。尽管已经经过了旋转，因子所代表的意义解释起来还是具有一定的困难的。
+
+因子得分如下：
+
+```{r}
+fa1$scores
+```
+
+## 体检数据分析
+
+### 数据导入与预处理
+
+读入数据，并把编号列去除。为了方便之后的分析，这里把 Gender 一列转化为 0-1 变量。
+
+```{r message=FALSE, warning=FALSE}
+mydata2 <- read_csv("Pro7Data2.csv")
+mydata2 <- select(mydata2, -No)
+mydata2$Gender <- sapply(1:nrow(mydata2), function(i) {
+  if(mydata2$Gender[i] == "男") 1 else 0
+})
+head(mydata2)
+```
+
+然后检查数据的缺失情况。
+
+```{r message=FALSE, warning=FALSE}
+aggr(mydata2, prop = FALSE, numbers = TRUE)
+```
+
+大约有 100 组数据存在缺失，由于占比不是很高，简单起见，这里只通过平均值来代替。
+
+```{r}
+mydata2$Sphygmus <- impute(mydata2$Sphygmus, mean)
+mydata2$IB <- impute(mydata2$IB, mean)
+mydata2$TP <- impute(mydata2$TP, mean)
+mydata2$Alb <- impute(mydata2$Alb, mean)
+mydata2$GLB <- impute(mydata2$GLB, mean)
+mydata2$Weight <- impute(mydata2$Weight, mean)
+mydata2$Height <- impute(mydata2$Height, mean)
+```
+
+### 主成分降维
+
+计算样本的主成分如下：
+
+```{r}
+pc2 <- princomp(mydata2, cor = TRUE)
+summary(pc2)
+```
+
+主成分的碎石图如下。
+
+```{r}
+screeplot(pc2, type = "lines")
+```
+
+为使主成分累积贡献率达到 85% 以上，需要前 9 个主成分。
+
+```{r}
+pc2.score <- predict(pc2)[, 1:9]
+```
+
+### 聚类分析
+
+实验中使用 Gap Statistics 方法来确定聚类的数目，其具体方法以及理论支持参见 Robert Tibshirani, Guenther Walther, Trevor Hastie 在 2001 年发表的论文："Estimating the Number of Clusters in a Data Set Via the Gap Statistic"。
+
+factoextra 包中的 fviz_nbclust() 函数实现了这个假设检验。这里使用最大迭代次数为 30 的 kmeans 算法来进行聚类。下图展示了聚类数目为 1 到 20 时计算出的 Gap Statistic。根据算法建议，我们将样品分为 2 类。
+
+```{r}
+fviz_nbclust(pc2.score, kmeans, k.max = 20,
+             method = "gap_stat", nboot = 500,
+             verbose = FALSE, iter.max = 30) +
+  labs(subtitle = "Gap statistic method")
+```
+
+kmeans 聚类得到的中心如下。
+
+```{r}
+kmeans.res2 <- kmeans(pc2.score, centers = 2, iter.max = 30)
+kmeans.res2$centers
+```
+
+### 因子分析
+
+这次的数据量较大，所以直接使用累积贡献率来确定公共因子数量。经计算，满足累积贡献率大于 70% 的最少的因子数量为 8。计算得到的因子模型如下：
+
+```{r}
+fa2 <- factanal(mydata2, factor = 8, 
+                fm = "mle", rotation = "varimax")
+fa2
+```
+
+各因子的解释：
+
++ 第 1 公因子：对性别，身高以及体重的影响大，可认为是基础体征因子。
++ 第 2 公因子：对 T-BIL (总胆红素), IB (间接胆红素) 的影响大，可认为是胆红素因子。
++ 第 3 公因子：对 ALT (谷丙转氨酶) 以及 AST	(谷草转氨酶) 影响大，认为是转氨酶因子。
++ 第 4 公因子：对 TB (总蛋白) 以及 GLB (球蛋白) 影响大，认为是球蛋白因子。
++ 第 5 公因子：对 sbp (收缩压), dbp (舒张压) 影响大，可看作血压因子。
++ 第 6 公因子：Alb (白蛋白) 因子。
++ 第 7 公因子：对 TC (总胆固醇), TG (甘油三酯) 影响大，可看作脂肪因子。
++ 第 8 公因子：对年龄以及脉搏影响大，认为是年龄因子。

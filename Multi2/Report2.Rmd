@@ -1,0 +1,369 @@
+---
+title: "实验二：利用R软件进行参数估计和假设检验"
+author:
+  - 林泽钦 3160104013 统计1601
+documentclass: ctexart
+output:
+  rticles::ctex:
+    fig_caption: yes
+    number_sections: yes
+    toc: yes
+classoption: "hyperref,"
+---
+
+# 实验目的和要求
+
+##  实验目的
+
+通过本试验项目：
+
++ 使学生理解并掌握数理统计中一些单变量参数估计和假设检验问题中在R软件包中的实现；
++ 多维数据的均值、方差、协方差矩阵等等；
++ 多维正态密度函数、分布函数，随机数等的产生；
++ 二维正态密度曲线作图。
+
+## 实验内容 
+
+附表中的数据 sample.xls 进行分析。记：$X_1=BMI, X_2=FPG, X_3=SBP, X_4=DBP, X_5=TG, X_6=HDL-C$，并构成一个向量。$X=(X_1, X_2, X_3, X_4, X_5, X_6)$。
+
++ 分析X各变量之间的相关性？
++ 分析患代谢综合症的比例有没有性别差异，与吸烟或喝酒是否有关？
++ 分年龄(小于等于30，30~50, 50~70, 70以上)，分析X中的各个指标是否有年龄上的差异？
++ 计算X样本均值、样本离差阵、样本协方差和样本相关阵。
++ 分析 $X_2, X_3$ 是否服从正态分布?
+
+## 实验环境
+
++ R-3.5.1
++ RStudio
+
+# 实验过程与结果
+
+## 数据导入
+
+为了简化数据导入与处理，实验中使用了 tidyverse 包。
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(gridExtra)
+library(corrgram)
+```
+
+实验中首先将提供的 .xls 文件保存为 .csv 文件，为了不影响读入，在导入数据之前就将中文的标题行删去，只留下英文的标题行。然后就可以直接使用 read_csv 函数将数据读入，得到一个数据类型为 tibble 的表。此数据类型的用法与数据框大致相同，不过 tidyverse 做了些许修改使得其更适合数据处理以及可视化。
+
+```{r DataImport, message=FALSE}
+OriginData <- read_csv("Pro2Data.csv")
+```
+
+可以看到，在生成的 tibble 中，.csv中缺失的数据被设置为了 NA。
+
+```{r DataShow, echo=FALSE}
+OriginData
+```
+
+首先计算 BMI，然后根据实验要求中的说明判断每个观测是否符合代谢综合症的诊断标准。BMI 的计算公式为体重 (kg) /身高 (m) 的平方。而根据代谢综合症的诊断标准，具备以下4项中的3项及以上即为代谢综合症:
+
++ **超重**：$BMI \geq 25.0 \ kg/m^2$;
++ **高血糖**：$FPG \geq 6.1 \ mmol/L$ 或已确诊糖尿病并治疗者;
++ **高血压**：收缩压 $SBP \geq 140 \ mmHg$  或舒张压 $DBP \geq 90 \ mmHg$,  或已确诊高血压并治疗者;
++ **空腹血**：甘油三脂 $TG \geq 1.7 \ mmol/L$ 或 $HDL-C < 0.9 \ mmol/L$（男），$HDL-C < 1.0 \ mmol/L$（女）.
+
+```{r CalCompleData, message=FALSE, warning=FALSE}
+# Calculate BMI
+DataWithBMI <- 
+  mutate(OriginData, BMI = 10000 * weight / (height*height))
+
+# Symptoms to diagnose Metabolic syndrome
+Overweight <- DataWithBMI$BMI >= 25
+HighBloodSugar <- DataWithBMI$FPG >= 6.1
+Hypertension <- DataWithBMI$sbp >= 140 | DataWithBMI$dbp >= 90
+FastingBlood <- with(DataWithBMI, TG > 1.7 | 
+                       (gender == "男" & HDLC < 0.9) |
+                       (gender == "女" & HDLC < 1.0))
+
+# MS: Logical variable for Metabolic syndrome
+CompleteData <- 
+  mutate(DataWithBMI, MS =
+           (Overweight & HighBloodSugar & Hypertension) |
+           (Overweight & HighBloodSugar & FastingBlood) |
+           (Overweight & Hypertension & FastingBlood) |
+           (HighBloodSugar & Hypertension & FastingBlood))
+```
+
+## 异常数据处理
+
+### 抽烟、饮酒
+
+首先对抽烟、饮酒的数据进行观察。
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# observe the smoke variable
+pie0 <- ggplot(CompleteData) + 
+  geom_bar(mapping = aes(x = smoke))
+
+# observe the drunk variable
+pie1 <- ggplot(CompleteData) + 
+  geom_bar(mapping = aes(x = drunk))
+
+grid.arrange(pie0, pie1, ncol=2, nrow=1)
+```
+
+从上图可以看出，对于 smoke 变量，应把戒烟2个月、戒烟3年、已戒烟归到“是”当中；对于 drunk 变量，应把“无”改为“否”。可运行如下代码进行转换：
+
+```{r warning=FALSE}
+# deal with the smoke variable
+CompleteData <- CompleteData %>%
+  mutate(smoke = ifelse(smoke == "戒烟3年", TRUE, smoke)) %>%
+  mutate(smoke = ifelse(smoke == "戒烟2个月", TRUE, smoke)) %>%
+  mutate(smoke = ifelse(smoke == "已戒烟", TRUE, smoke)) %>%
+  mutate(smoke = ifelse(smoke == "是", TRUE, smoke)) %>%
+  mutate(smoke = ifelse(smoke == "否", FALSE, smoke))
+
+# deal with the drunk variable
+CompleteData <- CompleteData %>%
+  mutate(drunk = ifelse(drunk == "是", TRUE, drunk)) %>%
+  mutate(drunk = ifelse(drunk == "否", FALSE, drunk)) %>%
+  mutate(drunk = ifelse(drunk == "无", FALSE, drunk))
+```
+
+### Age, Height, Weight, BMI
+
+同样是先对数据进行观察，为了方便观察离群点，可对 y 轴的尺度进行放大。
+
+```{r echo=FALSE}
+# observe the age variable
+pie2 <- ggplot(CompleteData) + 
+  geom_histogram(mapping = aes(x = age), binwidth = 1, na.rm = TRUE) +
+  coord_cartesian(ylim = c(0, 10))
+
+# observe the BMI variable
+pie3 <- ggplot(CompleteData) + 
+  geom_histogram(mapping = aes(x = BMI), binwidth = 10, na.rm = TRUE) +
+  coord_cartesian(ylim = c(0, 10))
+
+# observe the height variable
+pie4 <- ggplot(CompleteData) + 
+  geom_histogram(mapping = aes(x = height), binwidth = 10, na.rm = TRUE) +
+  coord_cartesian(ylim = c(0, 10))
+
+# observe the weight variable
+pie5 <- ggplot(CompleteData) + 
+  geom_histogram(mapping = aes(x = weight), binwidth = 10, na.rm = TRUE) +
+  coord_cartesian(ylim = c(0, 10))
+
+grid.arrange(pie2, pie3, pie4, pie5, ncol=2, nrow=2)
+```
+
+如图所示，需要注意的异常数据为：年龄小于10，BMI 大于500，身高小于60。而对于体重，尽管出现了 160kg 的离群点，但根据常识，这仍处于可接受范围内。因此，先调出上述异常数据进行观察。
+
+```{r}
+# Observe the unusual values
+CompleteData %>%
+  filter((age < 10) | (BMI > 500) | (height < 60))
+```
+
+经观察，上述数据的确不符合医学规律，应从原数据中剔除。
+
+```{r}
+# remove the unusual values
+CompleteData <- CompleteData %>%
+  filter(!((age < 10) | (BMI > 500) | (height < 60)))
+```
+
+### SBP, DBP, FPG, TG, HDLC
+
+同样是先对数据进行观察，可以根据数据的范围对坐标轴的尺度进行调整。
+
+```{r echo=FALSE}
+# observe the SBP variable
+pie6 <- ggplot(CompleteData) + 
+  geom_histogram(mapping = aes(x = sbp), binwidth = 1, na.rm = TRUE) +
+  coord_cartesian(ylim = c(0, 10))
+
+# observe the DBP variable
+pie7 <- ggplot(CompleteData) + 
+  geom_histogram(mapping = aes(x = dbp), binwidth = 1, na.rm = TRUE) +
+  coord_cartesian(ylim = c(0, 10))
+
+# observe the FPG variable
+pie8 <- ggplot(CompleteData) + 
+  geom_histogram(mapping = aes(x = FPG), binwidth = 0.25, na.rm = TRUE) +
+  coord_cartesian(ylim = c(0, 10))
+
+# observe the TG variable
+pie9 <- ggplot(CompleteData) + 
+  geom_histogram(mapping = aes(x = TG), binwidth = 0.25, na.rm = TRUE) +
+  coord_cartesian(ylim = c(0, 10))
+
+# observe the HDL-C variable
+pie10 <- ggplot(CompleteData) + 
+  geom_histogram(mapping = aes(x = HDLC), binwidth = 0.05, na.rm = TRUE) +
+  coord_cartesian(ylim = c(0, 10))
+
+grid.arrange(pie6, pie7, pie8, pie9, pie10, ncol=2, nrow=3)
+```
+
+如上所示，少数的几个离群点均在可接受范围内，因此不需要进行额外的处理。
+
+## 分析 X 各变量之间的相关性
+
+为了对 $X$ 进行分析，选取出变量 sbp, dbp, FPG, TG, HDL-C, BMI，然后去除缺失值。
+
+```{r}
+X <- CompleteData %>%
+  select(sbp, dbp, FPG, TG, HDLC, BMI) %>%
+  na.omit()
+```
+
+对数据 X 计算相关系数如下：
+
+```{r}
+cor(X, method = "pearson")
+```
+
+可以用相关图对其进行可视化，如下图所示。其中蓝色、红色分别代表正、负相关，且当相关性越强时，颜色越深。
+
+```{r}
+corrgram(X, text.panel = panel.txt,
+         lower.panel = panel.pie, upper.panel = NULL, 
+         main = "Analysis of Correlation in X")
+```
+
+## 分析代谢综合症与性别、吸烟、饮酒的关系
+
+使用二维列联表进行分析。由于用于生成列联表的 xtabs() 函数会自动忽略缺失值，所以不用先进行缺失值的处理。
+
+### 代谢综合症与性别
+
+用 xtabs() 函数生成列联表：
+
+```{r}
+MSWithGender <- xtabs(~ gender + MS, CompleteData)
+MSWithGender
+```
+
+对性别与代谢综合症进行卡方独立性检验：
+
+```{r}
+chisq.test(MSWithGender)
+```
+
+如上所示，$p < 0.01$，拒绝代谢综合症与性别相互独立的假设。
+
+### 代谢综合症与吸烟
+
+用同样的方法对吸烟与代谢综合症进行卡方独立性检验：
+
+```{r}
+MSWithSmoke <- xtabs(~ smoke + MS, CompleteData)
+chisq.test(MSWithSmoke)
+```
+
+如上所示，$p > 0.01$，没有足够理由说明代谢综合症与吸烟之间是不独立的。
+
+### 代谢综合症与饮酒
+
+```{r}
+MSWithDrunk <- xtabs(~ drunk + MS, CompleteData)
+chisq.test(MSWithDrunk)
+```
+
+同样，$p < 0.01$，应拒绝代谢综合症与饮酒相互独立的假设。
+
+## 分析 X 各指标是否有年龄上的差异
+
+首先对 X 根据年龄分组,具体做法如下：首先从 CompleteData 提取出相关的变量，然后去除缺失值，之后根据年龄生成一个 generation 有序变量，以便根据这个变量对数据进行分组。
+
+```{r}
+XWithGeneration <- CompleteData %>%
+  select(age, sbp, dbp, FPG, TG, HDLC, BMI) %>%
+  na.omit() %>%
+  mutate(generation = 
+           ifelse(age <= 30, "Young",
+           ifelse(age <= 50, "MiddleAged", 
+           ifelse(age <= 70, "YoungOld", "Old")))) %>%
+  mutate(generation = factor(generation, ordered = TRUE, 
+           levels = c("Young", "MiddleAged", "YoungOld", "Old")))
+```
+
+以下使用箱线图来分析 X 中的各个指标是否有年龄段上的差异。以 SBP 为例，可以明显看出，随着年龄的增长，SBP 的均值有明显上升，所以可以认为 SBP 有年龄上的差异。
+
+```{r}
+ggplot(data = XWithGeneration, 
+       mapping = aes(x = generation, y = sbp)) +
+  geom_boxplot()
+```
+
+其他指标的箱线图如下，从图中可以看出，有明显年龄段差异的指标为 dbp。
+
+```{r echo=FALSE}
+pie11 <- ggplot(data = XWithGeneration, 
+                mapping = aes(x = generation, y = dbp)) +
+  geom_boxplot()
+
+pie12 <- ggplot(data = XWithGeneration, 
+                mapping = aes(x = generation, y = FPG)) +
+  geom_boxplot()
+
+pie13 <- ggplot(data = XWithGeneration, 
+                mapping = aes(x = generation, y = TG)) +
+  geom_boxplot()
+
+pie14 <- ggplot(data = XWithGeneration, 
+                mapping = aes(x = generation, y = HDLC)) +
+  geom_boxplot()
+
+pie15 <- ggplot(data = XWithGeneration, 
+                mapping = aes(x = generation, y = BMI)) +
+  geom_boxplot()
+
+grid.arrange(pie11, pie12, pie13, pie14, pie15, ncol=2, nrow=3)
+```
+
+## 计算 X 样本均值、样本离差阵、样本协方差和样本相关阵
+
+### 样本均值
+
+```{r}
+colMeans(X)
+```
+
+### 样本离差阵
+
+```{r}
+cov(X) * (nrow(X) - 1)
+```
+
+### 样本协方差阵
+
+```{r}
+cov(X)
+```
+
+### 样本相关阵
+
+```{r}
+cor(X)
+```
+
+## 分析 $X_2, X_3$ 是否服从正态分布
+
+实验中使用 W 检验来对 $X_2, X_3$ 的正态性进行检验。W 即 Shapiro-Wilk 检验法，该方法计算 W 统计量。先分别对 $X_2, X_3$ 进行正态性检验。
+
+```{r}
+shapiro.test(X$FPG)
+```
+
+```{r}
+shapiro.test(X$sbp)
+```
+
+如上所示，两个检验计算出的 p-value 都十分小，因此拒绝原假设，认为两个变量各自都不服从正态分布。可以预见，$X_2, X_3$ 的联合分布也应该不服从二维正态分布。下面的检验也反映出一致的信息：
+
+```{r}
+X %>%
+  select(FPG, sbp) %>%
+  t() %>%
+  shapiro.test()
+```
+

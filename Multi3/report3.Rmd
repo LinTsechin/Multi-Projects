@@ -1,0 +1,418 @@
+---
+title: "实验三：利用R软件单变量和多变量正态检验和置信区域等"
+author:
+  - 林泽钦 3160104013 统计1601
+documentclass: ctexart
+output:
+  rticles::ctex:
+    fig_caption: yes
+    number_sections: yes
+    toc: yes
+classoption: "hyperref,"
+---
+
+# 实验目的和要求
+
+##  实验目的
+
+通过本试验项目，能够理解并掌握如下内容：
+
++ 单变量和多变量正态检验；
++ 多变量均值向量显著性检验；
++ 置信域和置信区间计算，画置信椭球等。
+
+
+## 实验内容 
+
+### 第一部分
+
+采用实验二 sample 样本。附表中的数据 sample.xls 进行分析。记 $X_1=BMI, X_2=FPG, X_3=SBP, X_4=DBP, X_5=TG, X_6=HDL-C$，并构成一个向量。$X=(X_1, X_2, X_3, X_4, X_5, X_6)$，任选下列一项详细分析患代谢综合症的群体与没有患代谢综合症群的差异。
+
++ 分析患代谢综合症的年龄差异
++ 分析患代谢综合症的性别差异
++ 分析是否吸烟对患代谢综合症的影响
++ 分析是否喝酒对患代谢综合症的影响
+
+### 第二部分
+
+数据 ex2.1 给出了 27 名糖尿病人血清总胆固醇 ($x_1$)， 甘油 ($x_2$)，空腹胰岛素 ($x_3$)，糖化血红蛋白 ($x_4$)，空腹血糖 ($y$) 的测量值。
+
++ 试建立血糖 ($y$) 与其他指标的线性回归方程，并进行分析；
++ $(x_1, x_2, x_3, x_4)$ 是否服从多元正态？$(x_1, x_2)$ 与 $(x_3, x_4)$ 是否相互独立？
+
+
+## 实验环境
+
++ R-3.5.1
++ RStudio
+
+# 实验过程与结果
+
+## 第一部分
+
+实验中选择对患代谢综合症的年龄差异进行分析。
+
+### 数据导入与预处理
+
+数据的导入与预处理与实验二基本相同，主要过程为：
+
++ 导入程序包
++ 导入实验数据
++ 计算 BMI
++ 计算用于判断代谢综合症的各个条件
++ 判断代谢综合症
++ 去除异常数据以及含有 NA 的行
+
+报告中省去了对异常值的分析，仅展示数据处理阶段的代码（对异常值的判断参见实验二的报告）。本次实验没有用到性别、吸烟、饮酒等数据，故在处理过程中删去。
+
+```{r message=FALSE, warning=FALSE}
+# import packages
+library(tidyverse)
+library(gridExtra)
+library(devtools)
+library(dplyr)
+library(ggpubr)
+library(MVN)
+
+# import data
+OriginData <- read_csv("Pro3Data1.csv")
+
+# calculate BMI
+DataWithBMI <- 
+  mutate(OriginData, BMI = 10000 * weight / (height*height))
+
+# symptoms for diagnosing Metabolic syndrome
+Overweight <- DataWithBMI$BMI >= 25
+HighBloodSugar <- DataWithBMI$FPG >= 6.1
+Hypertension <- DataWithBMI$sbp >= 140 | DataWithBMI$dbp >= 90
+FastingBlood <- with(DataWithBMI, TG > 1.7 | 
+                       (gender == "男" & HDLC < 0.9) |
+                       (gender == "女" & HDLC < 1.0))
+
+# MS: Logical variable for Metabolic syndrome
+CompleteData <- 
+  mutate(DataWithBMI, MS =
+           (Overweight & HighBloodSugar & Hypertension) |
+           (Overweight & HighBloodSugar & FastingBlood) |
+           (Overweight & Hypertension & FastingBlood) |
+           (HighBloodSugar & Hypertension & FastingBlood))
+
+# remove unusual values
+CompleteData <- CompleteData %>%
+  filter(!((age < 10) | (BMI > 500) | (height < 60)))
+
+# delete irrelevant columns
+# and delete rows with NA
+CompleteData <- CompleteData %>%
+  select(age, BMI, FPG, sbp, dbp, TG, HDLC, MS) %>%
+  na.omit()
+```
+
+### 检验相关数据正态性
+
+可以用 Q-Q 图对各指标数据进行观察。绘制 BMI 与 FPG 的 Q-Q 图的代码为：
+
+```{r}
+pie1 <- ggqqplot(CompleteData$BMI, 
+                 main = "QQ plot of BMI")
+pie2 <- ggqqplot(CompleteData$FPG, 
+                 main = "QQ plot of FPG")
+grid.arrange(pie1, pie2, ncol=2, nrow=1)
+```
+
+类似的可以绘制出 sbp, dbp, TG, HDLC 等数据的 Q-Q 图。
+
+```{r echo=FALSE}
+pie3 <- ggqqplot(CompleteData$sbp, 
+                 main = "QQ plot of sbp")
+pie4 <- ggqqplot(CompleteData$dbp, 
+                 main = "QQ plot of dbp")
+grid.arrange(pie3, pie4, ncol=2, nrow=1)
+```
+
+```{r echo=FALSE}
+pie5 <- ggqqplot(CompleteData$TG, 
+                 main = "QQ plot of TG")
+pie6 <- ggqqplot(CompleteData$HDLC, 
+                 main = "QQ plot of HDLC")
+grid.arrange(pie5, pie6, ncol=2, nrow=1)
+```
+
+初步判断，FPG 与 TG 不服从正态分布，而其它数据可以近似看作正态分布。但是具体是否可看作正态分布需要进一步的检验。下面使用假设检验来检验该数据的正态性。一元数据的常用的正态性检验方法有：
+
++ Shapiro-Wilk test
++ Cramer-von Mises test
++ Lilliefors test 
++ Shapiro-Francia test
++ Anderson-Darling test
+
+多元数据的正态性也有多种检验方法，例如：
+
++ Mardia’s test
++ Henze-Zirkler test
++ Royston test
++ Doornik-Hansen test
+
+实验中使用 MVN 包中的 mvn() 函数来检测数据的多元正态性。该函数可以指定使用的多元正态检验方法，同时可以对各个变量也进行正态性检验。实验中联合数据的正态检验使用了 Mardia’s test 方法，单个变量正态性的检验使用了常见的 Shapiro-Wilk test。下面的代码进行了检验，并绘制出联合数据的 $\chi^2$ 统计量的 Q-Q 图。
+
+```{r}
+res <- mvn(CompleteData[2:7], 
+           mvnTest = "mardia", 
+           univariateTest = "SW", 
+           multivariatePlot = "qq")
+```
+
+首先查看各个变量正态性检验的结果：
+
+```{r}
+res$univariateNormality
+```
+
+可以看到，各个变量检验得到的 p-value 都十分小 (<0.05)，因此倾向于拒绝原假设，认为正态性不成立。接着查看联合数据的正态性检验结果：
+
+```{r}
+res$multivariateNormality
+```
+
+同样，计算出 Mardia Skewness 与 Mardia Kurtosis 的 p-value 都十分小，因此不认为实验数据服从联合正态分布。关于实验中 mvn() 函数的使用，参考了 R 官方文档：
+
+https://cran.r-project.org/web/packages/MVN/vignettes/MVN.pdf
+
+而 Mardia’s test 的具体原理参见：
+Mardia, K. V. (1970). Measures of multivariate skewness and kurtosis with applications. Biometrika 36:519-530.
+
+
+### 检验相关数据相关性
+
+计算 X 的样本相关阵：
+
+```{r}
+CompleteData %>%
+  select(sbp, dbp, FPG, TG, HDLC, BMI) %>%
+  cor()
+```
+
+### 分析人群患代谢综合症的比例
+
+首先根据年龄对数据进行分组。首先查看年龄数据的相关统计信息：
+
+```{r}
+summary(CompleteData$age)
+```
+
+将年龄分组为青年 (15-40)，中年 (41-60) 与老年 (61-76)：
+
+```{r}
+CompleteData <- CompleteData %>%
+  mutate(generation = 
+           ifelse(age <= 40, "Young",
+           ifelse(age <= 60, "MiddleAged", "Old"))) %>%
+  mutate(generation = factor(generation, ordered = TRUE, 
+           levels = c("Young", "MiddleAged", "Old")))
+```
+
+然后生成频率表来查看不同年龄段患代谢综合症的比例的差异：
+
+```{r}
+MSWithGeneration <- xtabs(~ generation+MS, data = CompleteData)
+prop.table(MSWithGeneration, 1)
+```
+
+可以看到，随着年龄段的上升，患病比率也有一定程度的上升。为了验证两者的相关性，对其进行 Fisher 精确检验：
+
+```{r}
+fisher.test(MSWithGeneration)
+```
+
+可以看到检验的 p-value < 0.01，因此认定代谢综合症的患病率与年龄段并不独立。
+
+### 不同年龄组是否患代谢综合症群体各类指标的均值估计
+
+可以使用 colMeans() 函数来计算各类指标的均值。例如，对于不患病的年轻人群，各类指标的均值计算如下：
+
+```{r}
+Young.Healthy <- CompleteData %>%
+  filter(MS == FALSE, generation == "Young") %>%
+  select(BMI, FPG, sbp, dbp, TG, HDLC)
+
+colMeans(Young.Healthy)
+```
+
+将计算结果综合如下：
+
+```{r echo=FALSE}
+Young.Sick <- CompleteData %>%
+  filter(MS == TRUE, generation == "Young") %>%
+  select(BMI, FPG, sbp, dbp, TG, HDLC)
+MiddleAged.Healthy <- CompleteData %>%
+  filter(MS == FALSE, generation == "MiddleAged") %>%
+  select(BMI, FPG, sbp, dbp, TG, HDLC)
+MiddleAged.Sick <- CompleteData %>%
+  filter(MS == TRUE, generation == "MiddleAged") %>%
+  select(BMI, FPG, sbp, dbp, TG, HDLC)
+Old.Healthy <- CompleteData %>%
+  filter(MS == FALSE, generation == "Old") %>%
+  select(BMI, FPG, sbp, dbp, TG, HDLC)
+Old.Sick <- CompleteData %>%
+  filter(MS == TRUE, generation == "Old") %>%
+  select(BMI, FPG, sbp, dbp, TG, HDLC)
+
+rbind(Young.Healthy = colMeans(Young.Healthy), 
+      Young.Sick = colMeans(Young.Sick), 
+      MiddleAged.Healthy = colMeans(MiddleAged.Healthy), 
+      MiddleAged.Sick = colMeans(MiddleAged.Sick), 
+      Old.Healthy = colMeans(Old.Healthy), 
+      Old.Sick = colMeans(Old.Sick))
+```
+
+可以看到，在同年龄段的情况下，患病人群有着更高的 BMI, FPG, sbp, dbp 以及 TG，而 HDL-C 值就相对较低。
+
+### 不同年龄组是否患代谢综合症群体各类指标的置信区间
+
+可以利用 t 检验来计算中年患病人群的 BMI 指标的置信区间：
+
+```{r echo=FALSE}
+t.test(MiddleAged.Sick$BMI)
+```
+
+如上所示，其置信程度为 95% 的执行区间为 [26.10036, 28.82148]。类似的可以计算出各组数据各项指标的置信区间。例如青年健康人群各项指标的置信区间计算如下：
+
+```{r}
+BMI.Interval <- as.numeric(unlist(t.test(Young.Healthy$BMI)[4]))
+FPG.Interval <- as.numeric(unlist(t.test(Young.Healthy$FPG)[4]))
+sbp.Interval <- as.numeric(unlist(t.test(Young.Healthy$sbp)[4]))
+dbp.Interval <- as.numeric(unlist(t.test(Young.Healthy$dbp)[4]))
+TG.Interval <- as.numeric(unlist(t.test(Young.Healthy$TG)[4]))
+HDLC.Interval <- as.numeric(unlist(t.test(Young.Healthy$HDLC)[4]))
+
+rbind(BMI.Interval, FPG.Interval, sbp.Interval, 
+      dbp.Interval, TG.Interval, HDLC.Interval)
+```
+
+其他的年龄组的计算结果如下，其中由于青年患病的样本只有一例，故没有对其进行计算。
+
+青年患病：
+
+```{r echo=FALSE}
+Young.Sick
+```
+
+中年健康：
+
+```{r echo=FALSE}
+BMI.Interval <- as.numeric(unlist(t.test(MiddleAged.Healthy$BMI)[4]))
+FPG.Interval <- as.numeric(unlist(t.test(MiddleAged.Healthy$FPG)[4]))
+sbp.Interval <- as.numeric(unlist(t.test(MiddleAged.Healthy$sbp)[4]))
+dbp.Interval <- as.numeric(unlist(t.test(MiddleAged.Healthy$dbp)[4]))
+TG.Interval <- as.numeric(unlist(t.test(MiddleAged.Healthy$TG)[4]))
+HDLC.Interval <- as.numeric(unlist(t.test(MiddleAged.Healthy$HDLC)[4]))
+
+rbind(BMI.Interval, FPG.Interval, sbp.Interval, dbp.Interval, TG.Interval, HDLC.Interval)
+```
+
+中年患病：
+
+```{r echo=FALSE}
+BMI.Interval <- as.numeric(unlist(t.test(MiddleAged.Sick$BMI)[4]))
+FPG.Interval <- as.numeric(unlist(t.test(MiddleAged.Sick$FPG)[4]))
+sbp.Interval <- as.numeric(unlist(t.test(MiddleAged.Sick$sbp)[4]))
+dbp.Interval <- as.numeric(unlist(t.test(MiddleAged.Sick$dbp)[4]))
+TG.Interval <- as.numeric(unlist(t.test(MiddleAged.Sick$TG)[4]))
+HDLC.Interval <- as.numeric(unlist(t.test(MiddleAged.Sick$HDLC)[4]))
+
+rbind(BMI.Interval, FPG.Interval, sbp.Interval, dbp.Interval, TG.Interval, HDLC.Interval)
+```
+
+老年健康：
+
+```{r echo=FALSE}
+BMI.Interval <- as.numeric(unlist(t.test(Old.Healthy$BMI)[4]))
+FPG.Interval <- as.numeric(unlist(t.test(Old.Healthy$FPG)[4]))
+sbp.Interval <- as.numeric(unlist(t.test(Old.Healthy$sbp)[4]))
+dbp.Interval <- as.numeric(unlist(t.test(Old.Healthy$dbp)[4]))
+TG.Interval <- as.numeric(unlist(t.test(Old.Healthy$TG)[4]))
+HDLC.Interval <- as.numeric(unlist(t.test(Old.Healthy$HDLC)[4]))
+
+rbind(BMI.Interval, FPG.Interval, sbp.Interval, dbp.Interval, TG.Interval, HDLC.Interval)
+```
+
+老年患病：
+
+```{r echo=FALSE}
+BMI.Interval <- as.numeric(unlist(t.test(Old.Sick$BMI)[4]))
+FPG.Interval <- as.numeric(unlist(t.test(Old.Sick$FPG)[4]))
+sbp.Interval <- as.numeric(unlist(t.test(Old.Sick$sbp)[4]))
+dbp.Interval <- as.numeric(unlist(t.test(Old.Sick$dbp)[4]))
+TG.Interval <- as.numeric(unlist(t.test(Old.Sick$TG)[4]))
+HDLC.Interval <- as.numeric(unlist(t.test(Old.Sick$HDLC)[4]))
+
+rbind(BMI.Interval, FPG.Interval, sbp.Interval, dbp.Interval, TG.Interval, HDLC.Interval)
+```
+
+## 第二部分
+
+### 数据导入
+
+```{r}
+Data <- read.csv("Pro3Data2.csv")
+```
+
+
+### 建立线性回归方程
+
+对数据建立线性回归方程如下：
+
+```{r}
+lm.sol <- with(Data, lm(y ~ x1 + x2 + x3 + x4))
+summary(lm.sol)
+```
+
+拟合出的回归方程为：
+
+$y = 5.9433 + 0.1424 \ x_1 + 0.3515 \ x_2 - 0.2706 \ x_3 + 0.6382 \ x_4$
+
+并且从 Coefficient 一栏的信息可以看出， $x_1$ 的系数的拟合效果较差，其他系数拟合效果较好。
+
+### 正态性分析
+
+正态性的检验方法与实验的第一部分相同。
+
+```{r}
+res <- mvn(Data[2:5], 
+           mvnTest = "mardia", 
+           univariateTest = "SW", 
+           univariatePlot = "qqplot")
+```
+
+各个变量的正态性：
+
+```{r}
+res$univariateNormality
+```
+
+随机向量的正态性：
+
+```{r}
+res$multivariateNormality
+```
+
+从上述结果可以看出，$x_1, x_2$ 各自不服从正态分布，而 $x_3, x_4$ 各自近似服从正态分布。各个变量构成的随机向量不服从联合正态分布。假如去除变量 $x_1, x_2$ 之后再进行检验，可以看到 $x_3, x_4$ 构成的随机向量是近似服从联合正态分布的。
+
+```{r}
+res <- mvn(Data[4:5], 
+           mvnTest = "mardia", 
+           univariateTest = "SW")
+res$multivariateNormality
+```
+
+### 独立性分析
+
+这个问题比较难办，这里只能用一些比较 naive 的方法尝试进行分析。比如可以计算样本协方差阵：
+
+```{r}
+cor(Data[2:5])
+```
+
+可以看到，$(x_1, x_2)$ 与 $(x_3, x_4)$ 存在着一定的相关性。如果 $(x_1, x_2)$ 与 $(x_3, x_4)$ 是独立的，那么它们之间一定不相关。由此可以初步认为，它们之间不是独立的。
+
+至于用于检验非正态分布总体变量之间独立性的较可靠方法，我目前还没找到相关资料。一种朴素的想法是，将随机向量的值域划分为若干个区间，然后将连续型变量的观测值映射为类别，然后就可以通过卡方独立性检验来检验数据的独立性。不过这种方法受划分好坏、观测数目的影响很大，实际中并不使用。在实验的例子中，观测数目只有 27，并不适合这种方法。

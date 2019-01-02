@@ -1,0 +1,239 @@
+---
+title: "实验六：聚类分析和主成分分析"
+author:
+  - 林泽钦 3160104013 统计1601
+documentclass: ctexart
+output:
+  rticles::ctex:
+    fig_caption: yes
+    number_sections: yes
+    toc: yes
+classoption: "hyperref,"
+---
+
+# 实验目的和要求
+
+##  实验目的
+
+通过本试验项目，能够理解并掌握如下内容：
+
++ 熟练利用R对数据进行聚类分析；
++ 利用主成分分析方法进行变量降维。
+
+## 实验内容 
+
+### 饮料数据聚类
+
+现有 16 种饮料的热量、咖啡因含量、钠含量和价格的数据 (见 ex4.2)，根据这 4 个变量对 16 种饮料进行聚类。
+
+### 城市空气质量聚类
+
+中国 31 个城市 2011 年的空气质量数据 (见 ex4.3)，根据这个数据对 31 个城市进行聚类分析。
+
+### 行业数据主成分分析
+
+某市工业部门 13 个行业 8 项重要经济指标数据，其中 X1 为年末固定资产净值 (单位：万元)；X2 为职工人数 (单位：人)，X3 为工业总产值 (单位：万元)；X4 为全员劳动生产率 (单位：元/人年)；X5 为百元固定资产原值实现产值 (单位：元)；X6 为资金利税率 (%)；X7 为标准燃料消费量 (单位：吨)；X8 为能源利用效果 (单位：万元/吨)，数据见 case6.1。根据这些数据进行主成分分析。
+
+### 消费数据主成分分析
+
+我国 2010 各地区城镇居民家庭平均每人全年消费数据如 ex6.7 所示，这些数据指标分别从食品，衣着，居住，医疗，交通，通信，教育，家政和耐用消费品来描述消费。试对该数据进行主成分分析。
+
+## 实验环境
+
++ R-3.5.1
++ RStudio
+
+# 实验过程与结果
+
+以下为实验过程中需要用到的程序包。
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(gridExtra)
+```
+
+## 饮料数据聚类
+
+### 数据读入与处理
+
+首先将实验提供的 ex4.2.xls 转化为容易读取的 csv 格式，然后读入数据，丢弃第一列 (饮料序号)。由于各个变量量纲不一致，所以将数据标准化。
+
+```{r}
+data1 <- read.csv("Pro6Data1.csv", encoding = "UTF-8")
+data1 <- scale(data1[, 2:5])
+```
+
+### 类数目的确定
+
+我们需要确定聚类的数目，为此可以用距离矩阵的热图来发现类。先计算距离矩阵，然后使用 heatmap 函数即可绘出距离矩阵的热图，heatmap 使用的默认聚类方法为 hclust 函数默认的最大距离法。
+
+```{r}
+dist1 <- dist(data1, method = "euclidean")
+heatmap(as.matrix(dist1))
+```
+
+上述图像很难看出应该分几个类，因此尝试通过主成分的方法来确定类的数目。为方便可视化，我们取前两个主成分。这么做的前提是前两个主成分的贡献率足够高，考虑到样本只有四个变量，这种做法是可行的。下面的代码中，我们首先使用 Ward 离差平方和方法进行系统聚类，然后用 cutree 函数将样本分别切分为 2, 3, 4, 5 个类。然后对每一次切分都绘制出数据前两个主成分的平面图。
+
+```{r}
+model1 <- hclust(dist1, method = "ward.D")
+mds1 <- cmdscale(dist1, k = 2, eig = TRUE)
+X1 <- mds1$points[, 1]
+Y1 <- mds1$points[, 2]
+res1 <- lapply(2:5, function(i) {
+  cutree(model1, k = i)
+})
+pies1 <- lapply(1:4, function(i) {
+  ggplot(data.frame(X1, Y1), aes(X1, Y1)) + 
+    geom_point(size = 2, alpha = 0.8, aes(colour = factor(res1[[i]])))
+})
+grid.arrange(pies1[[1]], pies1[[2]], pies1[[3]], pies1[[4]],
+             ncol = 2, nrow = 2)
+```
+
+如上所示，当聚类数目大于 3 时，样本开始有交错的情况，因此，选择将样本聚合成 3 个类。
+
+### 系统聚类结果
+
+使用 Ward 样本离差阵法的系统聚类的结果为：
+
+```{r}
+res1[[2]]
+```
+
+相应的图像为：
+
+```{r}
+plot(model1, hang = -1)
+rect.hclust(model1, k = 3, border = "red")
+```
+
+### Kmeans 聚类结果
+
+可以将上述聚类结果作为 Kmeans 的初始输入。具体来说，就是计算上述各类的中心，将其作为迭代的初始中心点，如下所示：
+
+```{r}
+center.list1 <- lapply(1:3, function(i) {
+  colMeans(subset(data1, sapply(1:nrow(data1), function(j){
+    res1[[2]][j] == i})))})
+centers1 <- rbind(center.list1[[1]], 
+                 center.list1[[2]], 
+                 center.list1[[3]])
+kmeans(data1, centers1, algorithm = "MacQueen")
+```
+
+可以看到，kmeans 迭代得到的聚类结果与之前系统聚类的结果一致。
+
+## 城市空气质量聚类
+
+### 数据读入与处理
+
+同样将提供的 ex4.3.xls 转化为容易读取的 csv 格式，然后读入数据，将第一列城市名作为各个观测的标签。由于最后一列 (空气质量达到二级以上天数占全年比重
+) 与倒数第二列 (空气质量达到及好于二级的天数
+) 成比例，所以删去最后一列。另外，各个变量量纲不一致，所以将数据标准化。
+
+```{r}
+data2 <- read.csv("Pro6Data2.csv", fileEncoding = "UTF-8")
+data2 <- scale(data2[, 2:5])
+```
+
+### 类数目的确定
+
+步骤与前一部分基本一致。首先是矩阵热图，可以看到，依旧没什么用，可能是由于观测数目还不够多。
+
+```{r echo=FALSE}
+dist2 <- dist(data2, method = "euclidean")
+heatmap(as.matrix(dist2), labRow = FALSE, labCol = FALSE)
+```
+
+然后是主成分方法，如下图所示。可以看到各个分类都有一定的合理性。这里为了避免某个类的样本数目太少，我们将样本划分为 3 个类。
+
+```{r echo=FALSE}
+model2 <- hclust(dist2, method = "ward.D")
+mds2 <- cmdscale(dist2, k = 2, eig = TRUE)
+X2 <- mds2$points[, 1]
+Y2 <- mds2$points[, 2]
+res2 <- lapply(2:5, function(i) {
+  cutree(model2, k = i)
+})
+pies2 <- lapply(1:4, function(i) {
+  ggplot(data.frame(X2, Y2), aes(X2, Y2)) + 
+    geom_point(size = 2, alpha = 0.8, aes(colour = factor(res2[[i]])))
+})
+grid.arrange(pies2[[1]], pies2[[2]], pies2[[3]], pies2[[4]],
+             ncol = 2, nrow = 2)
+```
+
+### 系统聚类结果
+
+```{r}
+plot(model2, hang = -1)
+rect.hclust(model2, k = 3, border = "red")
+```
+
+## 行业数据主成分分析
+
+### 数据读取
+
+与之前相同，读取数据并进行标准化。
+
+```{r}
+data3 <- read.csv("Pro6Data3.csv", fileEncoding = "UTF-8")
+industry <- data3$Industry
+data3 <- scale(data3[2:9])
+rownames(data3) <- industry
+```
+
+### 主成分分析
+
+下面给出了样本主成分的贡献率以及载荷。可以看到，当取前四个主成分的时候，累计贡献率就高达 94.7%。
+
+```{r}
+pc3 <- princomp(data3, cor = TRUE)
+summary(pc3, loadings = TRUE)
+```
+
+下面是对应的碎石图。
+
+```{r}
+screeplot(pc3, type = "lines")
+```
+
+各个样本的主成分得分如下：
+
+```{r}
+predict(pc3)
+```
+
+## 消费数据主成分分析
+
+### 数据读取
+
+读取数据并进行标准化。
+
+```{r}
+data4 <- read.csv("Pro6Data4.csv", fileEncoding = "UTF-8")
+area <- data4$Area
+data4 <- scale(data4[2:9])
+rownames(data4) <- area
+```
+
+### 主成分分析
+
+下面给出了样本主成分的贡献率以及载荷。可以看到，当取前四个主成分的时候，累计贡献率就高达 93.1%。
+
+```{r}
+pc4 <- princomp(data4, cor = TRUE)
+summary(pc4, loadings = TRUE)
+```
+
+下面是对应的碎石图。
+
+```{r}
+screeplot(pc4, type = "lines")
+```
+
+各个样本的主成分得分如下：
+
+```{r}
+predict(pc4)
+```
